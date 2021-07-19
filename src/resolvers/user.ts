@@ -33,10 +33,11 @@ class UserResponse{
 export class UserResolver{
     @Query(() => User, {nullable: true})
     async me(
-        @Ctx() { req, em }: MyContext
-    ) {
-        if (!req.session.userID) {
-            return null
+        @Ctx() { req, em }: MyContext) 
+        {
+            console.log("session: ",req.session);
+            if (!req.session.userID) {
+                return null
         }
 
         const user = await em.findOne(User, {id: req.session.userID});
@@ -92,7 +93,7 @@ export class UserResolver{
             }
         }
         
-        req.session.userID = user.id;  //logs in user after registering
+        req.session.userID = user.id;  //sets cookie on user register
 
         return {user};
     }
