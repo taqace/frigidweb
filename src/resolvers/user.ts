@@ -1,83 +1,99 @@
 import { User } from "../entities/User";
 import { MyContext } from "src/types";
-import { Arg, Ctx, Field, InputType, Mutation, ObjectType, Query, Resolver } from "type-graphql";
+import {
+    Arg,
+    Ctx,
+    Field,
+    Mutation,
+    ObjectType,
+    Query,
+    Resolver,
+} from "type-graphql";
 import argon2 from "argon2";
+import { EntityManager } from "@mikro-orm/postgresql";
+import { COOKIE_NAME, FORGET_PASSWORD_PREFIX } from "../constants";
+import { UsernamePasswordInput } from "./UsernamePasswordInput";
+import { validateRegister } from "../utils/validateRegister";
+import { sendEmail } from "../utils/sendEmail";
+import { v4 } from "uuid";
 
 
-@InputType()
-class UsernamePasswordInput{
-    @Field()
-    username: string
-    @Field()
-    password: string
-}
 
 @ObjectType()
 class FieldError {
     @Field()
-    field: string
+    field: string;
     @Field()
-    message: string
+    message: string;
 }
 
 @ObjectType()
-class UserResponse{
-    @Field(() => [FieldError],{nullable:true})
+class UserResponse {
+    @Field(() => [FieldError], { nullable: true })
     errors?: FieldError[];
 
-    @Field(() => User,{nullable:true})
+    @Field(() => User, { nullable: true })
     user?: User;
 }
 
 @Resolver()
-export class UserResolver{
-    @Query(() => User, {nullable: true})
-    async me(
-        @Ctx() { req, em }: MyContext) 
-        {
-            console.log("session: ",req.session);
-            if (!req.session.userID) {
-                return null
+export class UserResolver {
+    @Mutation(() => Boolean)
+    async forgotPassword(
+        @Arg('email') email : string,
+        @Ctx() {em, redis} : MyContext
+    ) {
+        const user = await em.findOne(User,{email});
+        if (!user) {
+            return true; //email not in db
+        }
+        
+        const token = v4();
+        await redis.set(FORGET_PASSWORD_PREFIX + token, user.id, 'ex',1000*60*60*24*3)
+        await sendEmail(
+            email,
+            `<a href="http://localhost:3000/change-password/${token}">reset password</a>`)
+        return true
+    }
+
+    @Query(() => User, { nullable: true })
+    async me(@Ctx() { req, em }: MyContext) {
+        console.log("session: ", req.session);
+        if (!req.session.userID) {
+            return null;
         }
 
-        const user = await em.findOne(User, {id: req.session.userID});
-        return user
+        const user = await em.findOne(User, { id: req.session.userID });
+        return user;
     }
 
     @Mutation(() => UserResponse)
     async register(
-        @Arg('options') options: UsernamePasswordInput,
-        @Ctx() {em, req}: MyContext
-    ): Promise<UserResponse>{
-        if (options.username.length <= 2){
-            return {
-                errors: [
-                    {
-                        field: 'username',
-                        message: 'Length must be greater than two',
-                    },
-                ],
-            };
+        @Arg("options") options: UsernamePasswordInput,
+        @Ctx() { em, req }: MyContext
+    ): Promise<UserResponse> {
+        const errors = validateRegister(options);
+        if (errors) {
+            return {errors} ;
         }
-
-        if (options.password.length <= 3) {
-            return {
-                errors: [
-                    {
-                        field: 'password',
-                        message: 'Length must be greater than three',
-                    },
-                ],
-            };
-        }
+    
 
         const hashedPassword = await argon2.hash(options.password);
-        const user = em.create(User,{
-            username: options.username,
-            password: hashedPassword,
-        });
-        try{
-            await em.persistAndFlush(user)
+        let user;
+        try {
+            const result = await (em as EntityManager)
+                .createQueryBuilder(User)
+                .getKnexQuery()
+                .insert({
+                    username: options.username,
+                    email: options.email,
+                    password: hashedPassword,
+                    created_at: new Date(),
+                    updated_at: new Date(),
+                })
+                .returning("*");
+
+            user = result[0];
         } catch (err) {
             // || err.detail.includes("already exists")){
             // duplicate username error code i think?
@@ -92,43 +108,63 @@ export class UserResolver{
                 };
             }
         }
-        
-        req.session.userID = user.id;  //sets cookie on user register
 
-        return {user};
+        req.session.userID = user.id; //sets cookie on user register
+
+        return { user };
     }
 
     @Mutation(() => UserResponse)
     async login(
-        @Arg('options') options: UsernamePasswordInput,
-        @Ctx() {em,req}: MyContext
+        @Arg("usernameOrEmail") usernameOrEmail: string,
+        @Arg("password") password: string,
+        @Ctx() { em, req }: MyContext
     ): Promise<UserResponse> {
-        const user = await em.findOne(User,{username: options.username});
+        const user = await em.findOne(
+            User, 
+            usernameOrEmail.includes("@") 
+            ? { email: usernameOrEmail }
+            : { username: usernameOrEmail}
+        );
         if (!user) {
-            return{
+            return {
                 errors: [
                     {
-                    field: "username",
-                    message: "That username doesn't exist"
-                    }
+                        field: "usernameOrEmail",
+                        message: "That username doesn't exist",
+                    },
                 ],
             };
         }
-        const valid = await argon2.verify(user.password, options.password);
+        const valid = await argon2.verify(user.password, password);
         if (!valid) {
-            return{
+            return {
                 errors: [
                     {
-                    field: "password",
-                    message: "Incorrect Password"
-                    }
+                        field: "password",
+                        message: "Incorrect Password",
+                    },
                 ],
             };
-            
         }
 
         req.session!.userID = user.id;
-        
-        return {user,};
+
+        return { user };
+    }
+
+    @Mutation(() => Boolean)
+    logout(@Ctx() { req, res }: MyContext) {
+        return new Promise((resolve) =>
+            req.session.destroy((err) => {
+                res.clearCookie(COOKIE_NAME);
+                if (err) {
+                    console.log(err);
+                    resolve(false);
+                    return;
+                }
+                resolve(true);
+            })
+        );
     }
 }
