@@ -1,4 +1,3 @@
-
 import { Field, ObjectType } from "type-graphql";
 import { BaseEntity, Column, CreateDateColumn, Entity, ManyToOne,OneToMany,PrimaryGeneratedColumn, UpdateDateColumn } from "typeorm";
 import { Updoot } from "./Updoot";
@@ -45,4 +44,3 @@ export class Post extends BaseEntity{
     //
 
 };
-
