@@ -26,6 +26,7 @@ const Post_1 = require("../entities/Post");
 const type_graphql_1 = require("type-graphql");
 const isAuth_1 = require("../middleware/isAuth");
 const typeorm_1 = require("typeorm");
+const Updoot_1 = require("../entities/Updoot");
 let PostInput = class PostInput {
 };
 __decorate([
@@ -61,20 +62,35 @@ let PostResolver = class PostResolver {
             const isUpdoot = value !== -1;
             const realValue = isUpdoot ? 1 : -1;
             const { userID } = req.session;
-            yield typeorm_1.getConnection().query(`
-
-        START TRANSACTION;
-
-        insert into updoot ("userID", "postId", value)
-        values (${userID},${postId},${realValue});
-
-        update post p
-        set points = points + ${realValue}
-        where id = ${postId};
-
-        COMMIT;
-
-        `);
+            const updoot = yield Updoot_1.Updoot.findOne({ where: { postId, userID } });
+            if (updoot && updoot.value !== realValue) {
+                yield typeorm_1.getConnection().transaction((tm) => __awaiter(this, void 0, void 0, function* () {
+                    yield tm.query(`
+                
+                update updoot
+                set value = $1
+                where "postId" = $2 and "userID" = $3
+                `, [realValue, postId, userID]);
+                    yield tm.query(`
+                    update post p
+                    set points = points + $1
+                    where id = $2;
+                    `, [2 * realValue, postId]);
+                }));
+            }
+            else if (!updoot) {
+                yield typeorm_1.getConnection().transaction((tm) => __awaiter(this, void 0, void 0, function* () {
+                    yield tm.query(`
+                    insert into updoot ("userID", "postId", value)
+                    values ($1,$2,$3);
+                    `, [userID, postId, realValue]);
+                    yield tm.query(`
+                    update post
+                    set points = points + $1
+                    where id = $2;
+                    `, [realValue, postId]);
+                }));
+            }
             return true;
         });
     }
