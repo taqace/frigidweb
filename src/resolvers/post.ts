@@ -1,24 +1,23 @@
-import { Post } from "../entities/Post";
-
 import {
-    Resolver,
-    Query,
     Arg,
-    Mutation,
-    InputType,
-    Field,
     Ctx,
-    UseMiddleware,
-    Int,
+    Field,
     FieldResolver,
-    Root,
+    InputType,
+    Int,
+    Mutation,
     ObjectType,
+    Query,
+    Resolver,
+    Root,
+    UseMiddleware,
 } from "type-graphql";
-import { MyContext } from "../types";
-import { isAuth } from "../middleware/isAuth";
 import { getConnection } from "typeorm";
+import { Post } from "../entities/Post";
 import { Updoot } from "../entities/Updoot";
 import { User } from "../entities/User";
+import { isAuth } from "../middleware/isAuth";
+import { MyContext } from "../types";
 
 @InputType()
 class PostInput {
@@ -44,10 +43,18 @@ export class PostResolver {
     }
 
     @FieldResolver(() => User)
-    creator(@Root() post: Post) {
-        return User.findOne(post.creatorId);
+    creator(@Root() post: Post, @Ctx() { userLoader }: MyContext) {
+        return userLoader.load(post.creatorId);
     }
-    
+
+    @FieldResolver(() => Int, {nullable: true})
+    async voteStatus(@Root() post: Post, @Ctx() { updootLoader, req }: MyContext) {
+        if (!req.session.userID) {
+            return null;
+        }
+        const updoot = await updootLoader.load({postId: post.id, userId: req.session.userID})
+        return updoot ? updoot.value : null;
+    }
 
     @Mutation(() => Boolean)
     @UseMiddleware(isAuth)
@@ -122,27 +129,16 @@ export class PostResolver {
         const realLimitPlusOne = realLimit + 1;
         const replacements: any[] = [realLimitPlusOne];
 
-        if (req.session.userID) {
-            replacements.push(req.session.userID);
-        }
-
-        let cursorIdx = 3;
         if (cursor) {
             replacements.push(new Date(parseInt(cursor)));
-            cursorIdx = replacements.length;
         }
 
         const posts = await getConnection().query(
             `
 
-            select p.*,
-            ${
-                req.session.userID
-                    ? '(select value from updoot where "userID" = $2 and "postId" = p.id) "voteStatus"'
-                    : 'null as "voteStatus"'
-            }
+            select p.*
             from post p
-            ${cursor ? `where p."createdAt" < $${cursorIdx}` : ""}
+            ${cursor ? `where p."createdAt" < $2` : ""}
             order by p."createdAt" DESC
             limit $1
         `,
@@ -192,12 +188,12 @@ export class PostResolver {
         @Arg("id", () => Int) id: number,
         @Arg("title") title: string,
         @Arg("text") text: string,
-        @Ctx() {req}: MyContext
+        @Ctx() { req }: MyContext
     ): Promise<Post | null> {
         const result = await getConnection()
             .createQueryBuilder()
             .update(Post)
-            .set({ title,text})
+            .set({ title, text })
             .where('id = :id and "creatorId" = :creatorId', {
                 id,
                 creatorId: req.session.userID,
@@ -206,7 +202,6 @@ export class PostResolver {
             .execute();
 
         return result.raw[0];
-        
     }
 
     @Mutation(() => Boolean)

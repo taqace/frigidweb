@@ -15,7 +15,8 @@ import { User } from "./entities/User";
 import { Post } from "./entities/Post";
 import path from "path";
 import { Updoot } from "./entities/Updoot";
-
+import { createUserLoader } from "./utils/createUserLoader";
+import { createUpdootLoader } from "./utils/createUpdootLoader";
 
 const main = async () => {
     const conn = await createConnection({
@@ -24,7 +25,7 @@ const main = async () => {
         username: "postgres",
         password: "postgres",
         logging: true,
-        synchronize: true,  // set to true when using await Post.delete({})
+        synchronize: true, // set to true when using await Post.delete({})
         migrations: [path.join(__dirname, "./migrations/*")],
         entities: [Post, User, Updoot],
     });
@@ -65,7 +66,13 @@ const main = async () => {
         schema: await buildSchema({
             resolvers: [HelloResolver, PostResolver, UserResolver],
         }),
-        context: ({ req, res }) => ({ req, res, redis }),
+        context: ({ req, res }) => ({
+            req,
+            res,
+            redis,
+            userLoader: createUserLoader(),
+            updootLoader: createUpdootLoader(),
+        }),
     });
 
     apolloServer.applyMiddleware({
