@@ -66,7 +66,10 @@ let PostResolver = class PostResolver {
             if (!req.session.userID) {
                 return null;
             }
-            const updoot = yield updootLoader.load({ postId: post.id, userId: req.session.userID });
+            const updoot = yield updootLoader.load({
+                postId: post.id,
+                userId: req.session.userID,
+            });
             return updoot ? updoot.value : null;
         });
     }
